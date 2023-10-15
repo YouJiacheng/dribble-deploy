@@ -18,20 +18,28 @@ class Detector:
         trt.init_libnvinfer_plugins(logger, '')
         self.engine = runtime.deserialize_cuda_engine(engine_path.read_bytes())
         assert tuple(self.engine) == ('image', 'num', 'boxes', 'scores', 'classes')
-        self.image_size = tuple(self.engine.get_tensor_shape('image'))[2:]
-        print(self.image_size)
+        self.image_shape, self.image_dtype = self.get_shape_dtype('image')
+        print(f'Input image shape: {self.image_shape}, dtype: {self.image_dtype}')
         self.context = self.engine.create_execution_context()
 
+    def get_shape_dtype(self, name: str):
+        e = self.engine
+        if hasattr(e, 'get_tensor_shape') and hasattr(e, 'get_tensor_dtype'):
+            shape = e.get_tensor_shape(name)
+            dtype = e.get_tensor_dtype(name)
+        else: # fallback for TensorRT < 8.5
+            shape = e.get_binding_shape(name)
+            dtype = e.get_binding_dtype(name)
+        return tuple(shape), torch_dtype_from_trt[dtype]
+
     def allocate_tensor(self, name: str):
-        shape = tuple(self.engine.get_tensor_shape(name))
-        dtype = torch_dtype_from_trt[self.engine.get_tensor_dtype(name)]
+        shape, dtype = self.get_shape_dtype(name)
         return torch.empty(shape, dtype=dtype, device='cuda')
 
     def detect(self, image: torch.Tensor):
         bindings = [None for _ in range(5)]
-        assert image.shape[2:] == self.image_size
-        image_dtype = torch_dtype_from_trt[self.engine.get_tensor_dtype('image')]
-        image = image.to(device='cuda', dtype=image_dtype, non_blocking=True)
+        assert image.shape == self.image_shape
+        image = image.to(device='cuda', dtype=self.image_dtype, non_blocking=True)
         bindings[0] = image.data_ptr()
         num = self.allocate_tensor('num')
         bindings[1] = num.data_ptr()
@@ -46,14 +54,14 @@ class Detector:
 
     def get_fps(self):
         import time
-        image = torch.ones((1, 3, *self.image_size), dtype=torch.float32, device='cpu')
+        image = torch.ones(self.image_shape, dtype=self.image_dtype, device='cpu')
         for _ in range(5):  # warmup
             _ = self.detect(image)
 
-        t0 = time.perf_counter()
+        t = time.perf_counter()
         for _ in range(100):
             _ = self.detect(image)
-        print(100 / (time.perf_counter() - t0), 'FPS')
+        print(f'{100 / (time.perf_counter() - t)} FPS')
 
 
 if __name__ == '__main__':
