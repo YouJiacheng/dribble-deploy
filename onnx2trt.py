@@ -84,6 +84,7 @@ def define_network(builder, logger, onnx_path: Path, score_thres: float, iou_thr
 
     return network
 
+
 def serialize_network(builder, network, workspace_GiB: float, enable_fp16: bool, engine_path: Path):
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_GiB * (2 ** 30)))
@@ -110,19 +111,20 @@ def main():
                            help='NMS: The scalar threshold for score (low scoring boxes are removed).')
     argparser.add_argument('--iou_thres', default=0.65, type=float,
                            help='NMS: The scalar threshold for IOU (additional boxes that have high IOU overlap with previously selected boxes are removed).')
-    argparser.add_argument('--max_out', default=1, type=int, 
+    argparser.add_argument('--max_out', default=1, type=int,
                            help='The maximum number of detections to output per image.')
 
     args = argparser.parse_args()
 
     min_severity = trt.Logger.INFO.VERBOSE if args.verbose else trt.Logger.INFO
     logger = trt.Logger(min_severity)
-    trt.init_libnvinfer_plugins(logger, namespace='') 
+    trt.init_libnvinfer_plugins(logger, namespace='')
     builder = trt.Builder(logger)
 
     onnx_path = Path(args.onnx_path).resolve()
     network = define_network(builder, logger, onnx_path, args.score_thres, args.iou_thres, args.max_out)
     serialize_network(builder, network, args.workspace, args.fp16, onnx_path.with_suffix('.trt'))
+
 
 if __name__ == "__main__":
     main()
