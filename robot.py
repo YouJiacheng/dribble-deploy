@@ -1,8 +1,9 @@
 import importlib.machinery
 import importlib.util
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import numpy as np
 import torch
@@ -86,12 +87,14 @@ class Robot:
         self.safe = sdk.Safety(sdk.LeggedType.Go1)
         self.power_protect_state = sdk.LowState()
 
-        self.background_thread = Thread(target=self._poll, daemon=True)
+        self.stopped = Event()
+        self.background_thread = Thread(target=self._send_recv_loop, daemon=True)
         self.background_thread.start()
 
-    def _poll(self):
-        self.udp.Send()
-        self.udp.Recv()
+    def _send_recv_loop(self):
+        while not self.stopped.wait(0.005):
+            self.udp.Send()
+            self.udp.Recv()
 
     def step(self, action: torch.Tensor):
         self.set_act(action)
