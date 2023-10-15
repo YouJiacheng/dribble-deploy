@@ -27,7 +27,7 @@ class Detector:
         if hasattr(e, 'get_tensor_shape') and hasattr(e, 'get_tensor_dtype'):
             shape = e.get_tensor_shape(name)
             dtype = e.get_tensor_dtype(name)
-        else: # fallback for TensorRT < 8.5
+        else:  # fallback for TensorRT < 8.5
             shape = e.get_binding_shape(name)
             dtype = e.get_binding_dtype(name)
         return tuple(shape), torch_dtype_from_trt[dtype]
@@ -65,5 +65,30 @@ class Detector:
 
 
 if __name__ == '__main__':
+    import cv2
+    import torchvision.transforms as T
+    import zmq
+    cap = cv2.VideoCapture(
+        'udpsrc address=192.168.123.15 port=9201 '
+        '! application/x-rtp,media=video,encoding-name=H264 '
+        '! rtph264depay ! h264parse ! omxh264dec ! videoconvert ! appsink'
+    )
+
+    ctx: 'zmq.Context[zmq.Socket]' = zmq.Context.instance()
+    socket = ctx.socket(zmq.DEALER)
+    socket.set(zmq.CONFLATE, 1)
+    socket.bind('tcp://127.0.0.1:5555')
+
     detector = Detector(Path('best.trt'))
     detector.get_fps()
+
+    while True:
+        rv, image = cap.read()
+        if not rv:
+            continue
+        image = T.ToTensor()(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        image = T.Pad((8, 40))(image)
+        num, boxes, scores, classes = detector.detect(image[None])
+        score = scores[0, 0].item()
+        box_corner = boxes[0, 0].tolist()
+        socket.send_pyobj((score, box_corner))

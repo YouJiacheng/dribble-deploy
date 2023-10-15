@@ -1,6 +1,40 @@
+import math
 from pathlib import Path
 
 import torch
+import zmq
+
+
+class BallDetector:
+    def __init__(self):
+        ctx: 'zmq.Context[zmq.Socket]' = zmq.Context.instance()
+        self.socket = sock = ctx.socket(zmq.DEALER)
+        sock.set(zmq.CONFLATE, 1)
+        sock.connect('tcp://127.0.0.1:5555')
+        self.box_corner = None
+
+    def refresh(self):
+        try:
+            score, box_corner = self.socket.recv_pyobj(flags=zmq.NOBLOCK)
+        except zmq.error.Again:
+            return
+
+        if score + 1 > 0.5:
+            self.box_corner = box_corner
+
+    def get_ball_pos(self):
+        if self.box_corner is None:
+            return torch.tensor([0.5, 0.0, 0.0], dtype=torch.float32)
+        x0, y0, x1, y1 = self.box_corner
+        image_width = 480
+        offset = (x0 + x1) / 2 - image_width / 2
+        w = x1 - x0
+        h = y1 - y0
+        size = math.sqrt(w * h)
+
+        r = 20 / size  # ball at 1m distance has size 20px
+        θ = offset * 0.3 * (math.pi / 180)  # 0.3 deg per pixel
+        return torch.tensor([r * math.cos(θ), r * math.sin(θ), 0.0], dtype=torch.float32)
 
 
 def load_policy(root: Path):
@@ -20,9 +54,10 @@ def load_policy(root: Path):
 
 
 def env_transformed(history_len: int):
-    from robot import Robot, RobotObservation
     from math_utils import quaternion_conjugate, rotate_vector_by_quaternion
+    from robot import Robot, RobotObservation
     robot = Robot()
+    ball_detector = BallDetector()
 
     obs_dim = 75
     act_dim = 12
@@ -72,7 +107,7 @@ def env_transformed(history_len: int):
         return rotate_vector_by_quaternion(gravity, quaternion_conjugate(quaternion))
 
     def transform(robot_obs: RobotObservation) -> torch.Tensor:
-        ball_pos = torch.tensor([0.1, 0.0, 0.0], dtype=torch.float32)
+        ball_pos = ball_detector.get_ball_pos()
         projected_gravity = project_gravity(robot_obs.quaternion)
         commands = torch.tensor([
             robot_obs.lx,  # x vel
@@ -115,6 +150,7 @@ def env_transformed(history_len: int):
 
         robot_obs = robot.step(action)
         time_step()  # gait clock
+        ball_detector.refresh()
         obs = transform(robot_obs)
         store_obs(obs)
         return buffer[t - history_len:t]
