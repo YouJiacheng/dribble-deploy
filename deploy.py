@@ -48,7 +48,7 @@ def load_policy(root: Path):
         latent = adaptation_module(history)  # (1, 6)
         composed = torch.cat((history, latent), dim=-1)
         action = body(composed)
-        return action
+        return action[0]
 
     return policy
 
@@ -56,19 +56,9 @@ def load_policy(root: Path):
 def env_transformed(history_len: int):
     from math_utils import quaternion_conjugate, rotate_vector_by_quaternion
     from robot import Robot, RobotObservation
-    robot = Robot()
-    ball_detector = BallDetector()
 
     obs_dim = 75
     act_dim = 12
-
-    assert history_len > 0
-    buffer_len = history_len * 3
-    buffer = torch.zeros(buffer_len, obs_dim, dtype=torch.float32)
-    t = history_len
-
-    action_t = torch.zeros(act_dim, dtype=torch.float32)
-    action_t_minus1 = torch.zeros(act_dim, dtype=torch.float32)
 
     # gait type parameters
     phase = 0.5
@@ -82,8 +72,22 @@ def env_transformed(history_len: int):
     simulation_dt = 0.005
     dt = control_decimation * simulation_dt
 
+    action_scale = 0.25
+    hip_scale_reduction = 0.5
+
+    assert history_len > 0
+    buffer_len = history_len * 3
+    buffer = torch.zeros(buffer_len, obs_dim, dtype=torch.float32)
+    t = history_len
+
+    action_t = torch.zeros(act_dim, dtype=torch.float32)
+    action_t_minus1 = torch.zeros(act_dim, dtype=torch.float32)
+
     gait_index = torch.zeros(1, dtype=torch.float32)
     foot_gait_offset = torch.tensor([phase + offset + bound, offset, bound, phase], dtype=torch.float32)
+
+    robot = Robot()
+    ball_detector = BallDetector()
 
     def store_obs(obs: torch.Tensor):
         nonlocal t
@@ -110,24 +114,24 @@ def env_transformed(history_len: int):
         ball_pos = ball_detector.get_ball_pos()
         projected_gravity = project_gravity(robot_obs.quaternion)
         commands = torch.tensor([
-            robot_obs.lx,  # x vel
-            robot_obs.ly,  # y vel
-            0,  # yaw vel
-            0,  # body height
-            3,  # step frequency
+            robot_obs.lx * 2,   # x vel
+            robot_obs.ly * 2,   # y vel
+            0 * 0.25,           # yaw vel
+            0 * 2,              # body height
+            step_frequency,
             phase,
             offset,
             bound,
             duration,
-            0.09,  # foot swing height
-            0,  # pitch
-            0,  # roll
-            0,  # stance_width
-            0.1 / 2,  # stance length
-            0.01 / 2,  # unknown
+            0.09 * 0.15,        # foot swing height
+            0 * 0.3,            # pitch
+            0 * 0.3,            # roll
+            0,                  # stance_width
+            0.1 / 2,            # stance length
+            0.01 / 2,           # unknown
         ], dtype=torch.float32)
         dof_pos = robot_obs.joint_position
-        dof_vel = robot_obs.joint_velocity
+        dof_vel = robot_obs.joint_velocity * 0.05
         action = action_t
         last_action = action_t_minus1
         clock = torch.sin(2 * torch.pi * (gait_index + foot_gait_offset))
@@ -148,7 +152,10 @@ def env_transformed(history_len: int):
         action_t_minus1[:] = action_t
         action_t[:] = action
 
+        actions_scaled = action * action_scale
+        actions_scaled[[0, 3, 6, 9]] *= hip_scale_reduction
         robot_obs = robot.step(action)
+
         time_step()  # gait clock
         ball_detector.refresh()
         obs = transform(robot_obs)

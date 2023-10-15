@@ -54,7 +54,7 @@
 6. action: a_{t-1} (ActionSensor)
     d = 12
     scale = N/A # 1.0
-    Note: , 0 init
+    Note: 0 init
 7. last_action: a_{t-2} (ActionSensor(delay=1) / LastActionSensor(delay=1))
     d = 12
     scale = N/A # 1.0

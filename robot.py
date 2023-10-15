@@ -28,6 +28,21 @@ sim_index_to_name = [
     'RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint',
 ]
 
+name_to_q0 = {
+    'FL_hip_joint': 0.1,
+    'RL_hip_joint': 0.1,
+    'FR_hip_joint': -0.1,
+    'RR_hip_joint': -0.1,
+    'FL_thigh_joint': 0.8,
+    'RL_thigh_joint': 1.0,
+    'FR_thigh_joint': 0.8,
+    'RR_thigh_joint': 1.0,
+    'FL_calf_joint': -1.5,
+    'RL_calf_joint': -1.5,
+    'FR_calf_joint': -1.5,
+    'RR_calf_joint': -1.5,
+}
+
 num_joints = len(sim_index_to_name)
 
 # joint_real_to_sim[i] = j means that the i-th joint in sim corresponds to the j-th joint in real
@@ -35,6 +50,8 @@ joint_real_to_sim = torch.tensor([id_to_real_index[name_to_id[name]] for name in
 
 # joint_sim_to_real[i] = j means that the i-th joint in real corresponds to the j-th joint in sim
 joint_sim_to_real = torch.argsort(joint_real_to_sim)
+
+q0 = torch.tensor([name_to_q0[name] for name in sim_index_to_name], dtype=torch.float32)
 
 
 @dataclass
@@ -71,11 +88,11 @@ class Robot:
 
         self.background_thread = Thread(target=self._poll, daemon=True)
         self.background_thread.start()
-    
+
     def _poll(self):
         self.udp.Send()
         self.udp.Recv()
-    
+
     def step(self, action: torch.Tensor):
         self.set_act(action)
         return self.get_obs()
@@ -118,14 +135,14 @@ class Robot:
         cmd = self.sdk.LowCmd()
         self.udp.InitCmdData(cmd)
 
-        action_real = action[joint_sim_to_real]
+        q = (action + q0)[joint_sim_to_real]
 
         for i in range(12):
-            cmd.motorCmd[i].q = action_real[i]  # expected position
-            cmd.motorCmd[i].dq = 0.0            # expected velocity
-            cmd.motorCmd[i].Kp = Kp             # stiffness
-            cmd.motorCmd[i].Kd = Kd             # damping
-            cmd.motorCmd[i].tau = 0.0           # expected torque
+            cmd.motorCmd[i].q = q[i]    # expected position
+            cmd.motorCmd[i].dq = 0.0    # expected velocity
+            cmd.motorCmd[i].Kp = Kp     # stiffness
+            cmd.motorCmd[i].Kd = Kd     # damping
+            cmd.motorCmd[i].tau = 0.0   # expected torque
 
         self.safe.PowerProtect(cmd, self.retrieve_state(), 5)
         self.udp.SetSend(cmd)
