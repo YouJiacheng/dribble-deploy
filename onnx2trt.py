@@ -87,7 +87,10 @@ def define_network(builder, logger, onnx_path: Path, score_thres: float, iou_thr
 
 def serialize_network(builder, network, workspace_GiB: float, enable_fp16: bool, engine_path: Path):
     config = builder.create_builder_config()
-    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_GiB * (2 ** 30)))
+    if hasattr(config, 'set_memory_pool_limit'):
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_GiB * (2 ** 30)))
+    else:  # fallback for TensorRT < 8.4
+        config.max_workspace_size = int(workspace_GiB * (2 ** 30))
     if enable_fp16:
         # Enable fp16 layer selection
         config.set_flag(trt.BuilderFlag.FP16)
