@@ -73,7 +73,7 @@ def env_transformed(history_len: int):
     dt = control_decimation * simulation_dt
 
     action_scale = 0.25
-    hip_scale_reduction = 0.5
+    hip_scale_reduction = torch.tensor([0.5, 1, 1] * 4, dtype=torch.float32)
 
     assert history_len > 0
     buffer_len = history_len * 3
@@ -152,9 +152,8 @@ def env_transformed(history_len: int):
         action_t_minus1[:] = action_t
         action_t[:] = action
 
-        actions_scaled = action * action_scale
-        actions_scaled[[0, 3, 6, 9]] *= hip_scale_reduction
-        robot_obs = robot.step(action)
+        action_scaled = action * action_scale * hip_scale_reduction
+        robot_obs = robot.step(action_scaled)
 
         time_step()  # gait clock
         ball_detector.refresh()
