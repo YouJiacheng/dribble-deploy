@@ -1,6 +1,5 @@
 import importlib.machinery
 import importlib.util
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
@@ -81,20 +80,42 @@ class Robot:
             raise
         sdk = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sdk)
-        self.sdk = sdk
-        self.udp = sdk.UDP(Robot.LOWLEVEL, 8080, "192.168.123.10", 8007)
 
+        self.sdk = sdk
         self.safe = sdk.Safety(sdk.LeggedType.Go1)
-        self.power_protect_state = sdk.LowState()
+        self.state = sdk.LowState()
+        self.q = q0.clone()
 
         self.stopped = Event()
         self.background_thread = Thread(target=self._send_recv_loop, daemon=True)
         self.background_thread.start()
 
     def _send_recv_loop(self):
+        # parameter
+        Kp = 20.0
+        Kd = 0.5
+
+        # setup
+        udp = self.sdk.UDP(Robot.LOWLEVEL, 8080, "192.168.123.10", 8007)
+
+        cmd = self.sdk.LowCmd()
+        udp.InitCmdData(cmd)
         while not self.stopped.wait(0.005):
-            self.udp.Send()
-            self.udp.Recv()
+            udp.Recv()
+            udp.GetRecv(self.state)
+            # tolist + copy from list cost ~1.5us on server CPU
+            # directly copy from torch tensor to list cost ~15us
+            q = self.q.tolist()
+            for i in range(12):
+                cmd.motorCmd[i].q = q[i]    # expected position
+                cmd.motorCmd[i].dq = 0.0    # expected velocity
+                cmd.motorCmd[i].Kp = Kp     # stiffness
+                cmd.motorCmd[i].Kd = Kd     # damping
+                cmd.motorCmd[i].tau = 0.0   # expected torque
+            self.safe.PositionLimit(cmd)
+            self.safe.PowerProtect(cmd, self.state, 5)
+            udp.SetSend(cmd)
+            udp.Send()
 
     def step(self, action: torch.Tensor):
         self.set_act(action)
@@ -103,20 +124,23 @@ class Robot:
     def get_obs(self):
         dtype = torch.float32
 
-        state = self.retrieve_state()
-
-        joint_position_real = torch.tensor([state.motorState[i].q for i in range(12)], dtype=dtype)
-        joint_velocity_real = torch.tensor([state.motorState[i].dq for i in range(12)], dtype=dtype)
+        motor_state = self.state.motorState  # std::array<MotorState, 20>
+        # pybind11 will convert std::array into python list
+        joint_position_real = torch.tensor([motor_state[i].q for i in range(12)], dtype=dtype)
+        joint_velocity_real = torch.tensor([motor_state[i].dq for i in range(12)], dtype=dtype)
 
         joint_position_sim = joint_position_real[joint_real_to_sim]
         joint_velocity_sim = joint_velocity_real[joint_real_to_sim]
 
+        imu = self.state.imu  # gyroscope & rpy: std::array<float, 3>, quaternion: std::array<float, 4>
         # pybind11 will convert std::array into python list
-        gyroscope = torch.tensor(state.imu.gyroscope, dtype=dtype)  # rpy order, rad/s
-        quaternion = torch.tensor(state.imu.quaternion, dtype=dtype)  # (w, x, y, z) order, normalized
-        rpy = torch.tensor(state.imu.rpy, dtype=dtype)  # rpy order, rad
+        gyroscope = torch.tensor(imu.gyroscope, dtype=dtype)  # rpy order, rad/s
+        quaternion = torch.tensor(imu.quaternion, dtype=dtype)  # (w, x, y, z) order, normalized
+        rpy = torch.tensor(imu.rpy, dtype=dtype)  # rpy order, rad
 
-        keydata = torch.from_numpy(np.array(state.wirelessRemote, dtype='uint8')[4:24].view(np.float32))
+        rc = self.state.wirelessRemote  # std::array<uint8_t, 40>
+        # pybind11 will convert std::array into python list
+        keydata = torch.from_numpy(np.array(rc, dtype=np.uint8)[4:24].view(np.float32))
         lx, rx, ry, _, ly = keydata
 
         return RobotObservation(
@@ -132,25 +156,4 @@ class Robot:
         )
 
     def set_act(self, action: torch.Tensor):
-        Kp = 20.0
-        Kd = 0.5
-
-        cmd = self.sdk.LowCmd()
-        self.udp.InitCmdData(cmd)
-
-        q = (action + q0)[joint_sim_to_real]
-
-        for i in range(12):
-            cmd.motorCmd[i].q = q[i]    # expected position
-            cmd.motorCmd[i].dq = 0.0    # expected velocity
-            cmd.motorCmd[i].Kp = Kp     # stiffness
-            cmd.motorCmd[i].Kd = Kd     # damping
-            cmd.motorCmd[i].tau = 0.0   # expected torque
-
-        self.safe.PowerProtect(cmd, self.retrieve_state(), 5)
-        self.udp.SetSend(cmd)
-
-    def retrieve_state(self):
-        state = self.sdk.LowState()
-        self.udp.GetRecv(state)
-        return state
+        self.q = (action + q0)[joint_sim_to_real]
