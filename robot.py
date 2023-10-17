@@ -98,8 +98,17 @@ class Robot:
         # setup
         udp = self.sdk.UDP(Robot.LOWLEVEL, 8080, "192.168.123.10", 8007)
 
+        # === Loop Invariant Code Motion ===
         cmd = self.sdk.LowCmd()
         udp.InitCmdData(cmd)
+        # PositionLimit and PowerProtect won't modify dq, Kp, Kd, tau
+        for i in range(12):
+            cmd.motorCmd[i].dq = 0.0    # expected velocity
+            cmd.motorCmd[i].Kp = Kp     # stiffness
+            cmd.motorCmd[i].Kd = Kd     # damping
+            cmd.motorCmd[i].tau = 0.0   # expected torque
+        # === Loop Invariant Code Motion ===
+
         while not self.stopped.wait(0.005):
             udp.Recv()
             udp.GetRecv(self.state)
@@ -108,10 +117,6 @@ class Robot:
             q = self.q.tolist()
             for i in range(12):
                 cmd.motorCmd[i].q = q[i]    # expected position
-                cmd.motorCmd[i].dq = 0.0    # expected velocity
-                cmd.motorCmd[i].Kp = Kp     # stiffness
-                cmd.motorCmd[i].Kd = Kd     # damping
-                cmd.motorCmd[i].tau = 0.0   # expected torque
             self.safe.PositionLimit(cmd)
             self.safe.PowerProtect(cmd, self.state, 5)
             udp.SetSend(cmd)
