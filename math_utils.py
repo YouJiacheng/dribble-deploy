@@ -17,3 +17,12 @@ def rotate_vector_by_quaternion(v: torch.Tensor, q: torch.Tensor) -> torch.Tenso
     v_quaternion = torch.cat([v.new_zeros(*v.shape[:-1], 1), v], dim=-1)
     rotated_quaternion = quaternion_multiply(q, quaternion_multiply(v_quaternion, quaternion_conjugate(q)))
     return rotated_quaternion[..., 1:]
+
+def project_gravity(quaternion: torch.Tensor) -> torch.Tensor:
+    gravity = torch.tensor([0.0, 0.0, -1], dtype=torch.float32)
+    return rotate_vector_by_quaternion(gravity, quaternion_conjugate(quaternion))
+
+def wrap_to_pi_(x: torch.Tensor):
+    x.remainder_(2 * torch.pi)
+    x[x > torch.pi] -= 2 * torch.pi
+    return x

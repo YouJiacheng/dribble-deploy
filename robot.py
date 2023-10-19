@@ -125,10 +125,6 @@ class Robot:
             udp.SetSend(cmd)
             udp.Send()
 
-    def step(self, action: torch.Tensor):
-        self.set_act(action)
-        return self.get_obs()
-
     def get_obs(self):
         dtype = torch.float32
 

@@ -4,6 +4,9 @@ from pathlib import Path
 import torch
 import zmq
 
+from math_utils import project_gravity, wrap_to_pi_
+from robot import Robot, RobotObservation
+
 
 class BallDetector:
     def __init__(self):
@@ -53,10 +56,12 @@ def load_policy(root: Path):
     return policy
 
 
-def env_transformed(history_len: int):
-    from math_utils import quaternion_conjugate, rotate_vector_by_quaternion
-    from robot import Robot, RobotObservation
+class RealtimeEnv:
+    def observe(self): ...
+    def advance(self, action): ...
 
+
+class DribbleEnv(RealtimeEnv):
     obs_dim = 75
     act_dim = 12
 
@@ -64,6 +69,8 @@ def env_transformed(history_len: int):
     phase = 0.5
     offset = 0
     bound = 0
+
+    foot_gait_offsets = torch.tensor([phase + offset + bound, offset, bound, phase], dtype=torch.float32)
 
     duration = 0.5  # duration = stance / (stance + swing)
     step_frequency = 3
@@ -75,54 +82,57 @@ def env_transformed(history_len: int):
     action_scale = 0.25
     hip_scale_reduction = torch.tensor([0.5, 1, 1] * 4, dtype=torch.float32)
 
-    assert history_len > 0
-    buffer_len = history_len * 3
-    buffer = torch.zeros(buffer_len, obs_dim, dtype=torch.float32)
-    t = history_len
+    def __init__(self, history_len: int):
+        assert history_len > 0
 
-    action_t = torch.zeros(act_dim, dtype=torch.float32)
-    action_t_minus1 = torch.zeros(act_dim, dtype=torch.float32)
+        self.history_len = history_len
+        self.buffer = torch.zeros(history_len * 3, self.obs_dim, dtype=torch.float32)
+        self.t = history_len
 
-    gait_index = torch.zeros(1, dtype=torch.float32)
-    foot_gait_offset = torch.tensor([phase + offset + bound, offset, bound, phase], dtype=torch.float32)
+        self.action_t = torch.zeros(self.obs_dim, dtype=torch.float32)
+        self.action_t_minus1 = torch.zeros(self.act_dim, dtype=torch.float32)
 
-    robot = Robot()
-    ball_detector = BallDetector()
+        self.gait_index = torch.zeros(1, dtype=torch.float32)
 
-    def store_obs(obs: torch.Tensor):
-        nonlocal t
-        if t == buffer_len:
-            buffer[:history_len] = buffer[t - history_len:t].clone()
-            t = history_len
+        self.robot = Robot()
+        self.ball_detector = BallDetector()
 
+    def observe(self):
+        self.ball_detector.refresh()
+        robot_obs = self.robot.get_obs()
+        obs = self.make_obs(robot_obs)
+        self.store_obs(obs)
+        return self.buffer[self.t - self.history_len:self.t]
+
+    def advance(self, action):
+        self.action_t_minus1[:] = self.action_t
+        self.action_t[:] = action
+
+        action_scaled = action * self.action_scale * self.hip_scale_reduction
+        self.robot.set_act(action_scaled)
+        self.gait_index.add_(self.dt * self.step_frequency).remainder_(1)
+
+    def store_obs(self, obs: torch.Tensor):
+        h, buffer, t = self.history_len, self.buffer, self.t
+        if t == buffer.shape[0]:
+            buffer[:h] = buffer[t - h:t].clone()
+            t = h
         buffer[t] = obs
-        t += 1
+        self.t = t + 1
 
-    def time_step():
-        gait_index.add_(dt * step_frequency).remainder_(1)
-
-    def wrap_to_pi_inplace(x: torch.Tensor):
-        x.remainder_(2 * torch.pi)
-        x[x > torch.pi] -= 2 * torch.pi
-        return x
-
-    def project_gravity(quaternion: torch.Tensor) -> torch.Tensor:
-        gravity = torch.tensor([0.0, 0.0, -1], dtype=torch.float32)
-        return rotate_vector_by_quaternion(gravity, quaternion_conjugate(quaternion))
-
-    def transform(robot_obs: RobotObservation) -> torch.Tensor:
-        ball_pos = ball_detector.get_ball_pos()
+    def make_obs(self, robot_obs: RobotObservation) -> torch.Tensor:
+        ball_pos = self.ball_detector.get_ball_pos()
         projected_gravity = project_gravity(robot_obs.quaternion)
         commands = torch.tensor([
             robot_obs.lx * 2,   # x vel
             robot_obs.ly * 2,   # y vel
             0 * 0.25,           # yaw vel
             0 * 2,              # body height
-            step_frequency,
-            phase,
-            offset,
-            bound,
-            duration,
+            self.step_frequency,
+            self.phase,
+            self.offset,
+            self.bound,
+            self.duration,
             0.09 * 0.15,        # foot swing height
             0 * 0.3,            # pitch
             0 * 0.3,            # roll
@@ -132,11 +142,12 @@ def env_transformed(history_len: int):
         ], dtype=torch.float32)
         dof_pos = robot_obs.joint_position
         dof_vel = robot_obs.joint_velocity * 0.05
-        action = action_t
-        last_action = action_t_minus1
-        clock = torch.sin(2 * torch.pi * (gait_index + foot_gait_offset))
-        yaw = wrap_to_pi_inplace(robot_obs.rpy[None, 2].clone())
-        timing = gait_index
+        action = self.action_t
+        last_action = self.action_t_minus1
+        clock = torch.sin(2 * torch.pi * self.foot_indices())
+        yaw = wrap_to_pi_(robot_obs.rpy[None, 2].clone())
+        timing = self.gait_index
+
         return torch.cat([
             ball_pos,
             projected_gravity,
@@ -148,17 +159,7 @@ def env_transformed(history_len: int):
             timing,
         ])
 
-    def step(action: torch.Tensor):
-        action_t_minus1[:] = action_t
-        action_t[:] = action
+    def foot_indices(self):
+        return self.gait_index + self.foot_gait_offsets
 
-        action_scaled = action * action_scale * hip_scale_reduction
-        robot_obs = robot.step(action_scaled)
 
-        time_step()  # gait clock
-        ball_detector.refresh()
-        obs = transform(robot_obs)
-        store_obs(obs)
-        return buffer[t - history_len:t]
-
-    return step
