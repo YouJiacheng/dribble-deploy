@@ -45,11 +45,14 @@ name_to_q0 = {
 
 num_joints = len(sim_index_to_name)
 
-# joint_real_to_sim[i] = j means that the i-th joint in sim corresponds to the j-th joint in real
-joint_real_to_sim = torch.tensor([id_to_real_index[name_to_id[name]] for name in sim_index_to_name])
+# sim index to real index mapping is for real-to-sim conversion
+# assert real_joints[sim_index_to_real_index] == sim_joints
+# equivalent to
+# for sim_idx, real_idx in enumerate(sim_index_to_real_index):
+#     assert real_joints[real_idx] == sim_joints[sim_idx]
+sim_idx_to_real_idx = torch.tensor([id_to_real_index[name_to_id[name]] for name in sim_index_to_name])
 
-# joint_sim_to_real[i] = j means that the i-th joint in real corresponds to the j-th joint in sim
-joint_sim_to_real = torch.argsort(joint_real_to_sim)
+real_idx_to_sim_idx = torch.argsort(sim_idx_to_real_idx)
 
 q0 = torch.tensor([name_to_q0[name] for name in sim_index_to_name], dtype=torch.float32)
 
@@ -134,8 +137,9 @@ class Robot:
         joint_position_real = torch.tensor([motor_state[i].q for i in range(12)], dtype=dtype)
         joint_velocity_real = torch.tensor([motor_state[i].dq for i in range(12)], dtype=dtype)
 
-        joint_position_sim = joint_position_real[joint_real_to_sim]
-        joint_velocity_sim = joint_velocity_real[joint_real_to_sim]
+        # sim index to real index mapping is for real-to-sim conversion
+        joint_position_sim = joint_position_real[sim_idx_to_real_idx]
+        joint_velocity_sim = joint_velocity_real[sim_idx_to_real_idx]
 
         imu = self.state.imu  # gyroscope & rpy: std::array<float, 3>, quaternion: std::array<float, 4>
         # pybind11 will convert std::array into python list
@@ -161,4 +165,5 @@ class Robot:
         )
 
     def set_act(self, action: torch.Tensor):
-        self.q = (action + q0)[joint_sim_to_real]
+        # real index to sim index mapping is for sim-to-real conversion
+        self.q = (action + q0)[real_idx_to_sim_idx]
