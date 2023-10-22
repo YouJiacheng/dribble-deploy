@@ -219,3 +219,23 @@ class Robot:
     def set_act(self, action: torch.Tensor):
         Δq_模 = action.tolist()
         self.Δq_真 = [Δq_模[i] for i in real_idx_to_sim_idx]
+
+    def init(self):
+        import math
+        state = self.state
+        stopped = self.stopped
+        while any(math.isnan(Δq) for Δq in self.Δq_真) and not stopped.wait(0.05):
+            pass
+
+        Δq_sequence = []
+        Δq_t = self.Δq_真
+        while any(abs(Δq) > 0.01 for Δq in Δq_t):
+            # reduce Δq magnitude by 0.05 rad per step
+            Δq_t = [math.copysign(max(0, abs(Δq) - 0.05), Δq) for Δq in Δq_t]
+            Δq_sequence.append(Δq_t)
+        
+        for Δq_t in Δq_sequence:
+            self.Δq_真 = Δq_t
+            # 0.05 sec per step
+            if stopped.wait(0.05):
+                break
