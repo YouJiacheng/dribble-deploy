@@ -124,8 +124,10 @@ class DribbleEnv(RealtimeEnv):
         ball_pos = self.ball_detector.get_ball_pos()
         projected_gravity = project_gravity(robot_obs.quaternion)
         commands = torch.tensor([
-            robot_obs.lx * 2,   # x vel
-            robot_obs.ly * 2,   # y vel
+            # rocker x: left/right
+            # rocker y: forward/backward
+            robot_obs.ly * 2,   # x vel
+            robot_obs.lx * 2,   # y vel
             0 * 0.25,           # yaw vel
             0 * 2,              # body height
             self.step_frequency,
