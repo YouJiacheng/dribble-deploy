@@ -103,7 +103,7 @@ class Robot:
 
         # the struct module does have compiled format cache
         # reuse the Struct object explicitly for clarity, not performance
-        self.joystick_struct = struct.Struct('@5f')
+        self.rocker_struct = struct.Struct('@5f')
 
         self.Δq_真 = [float('NaN') for _ in range(12)]
 
@@ -207,7 +207,7 @@ class Robot:
         rc = self.state.wirelessRemote  # std::array<uint8_t, 40> => list[int]
         # stdlib struct.unpack is faster than convert tensor then .view(torch.float32)
         # and torch<=1.10 only support .view to dtype with same size
-        lx, rx, ry, _, ly = self.joystick_struct.unpack(bytes(rc[4:24]))
+        lx, rx, ry, _, ly = self.rocker_struct.unpack(bytes(rc[4:24]))
 
         # LSB -> MSB
         # rc[2] = [R1, L1, start, select][R2, L2, F1, F2]
@@ -234,7 +234,6 @@ class Robot:
 
     def init(self):
         import math
-        state = self.state
         stopped = self.stopped
         while any(math.isnan(Δq) for Δq in self.Δq_真) and not stopped.wait(0.05):
             pass
