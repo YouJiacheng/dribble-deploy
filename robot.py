@@ -209,6 +209,13 @@ class Robot:
         # and torch<=1.10 only support .view to dtype with same size
         lx, rx, ry, _, ly = self.joystick_struct.unpack(bytes(rc[4:24]))
 
+        # LSB -> MSB
+        # rc[2] = [R1, L1, start, select][R2, L2, F1, F2]
+        # rc[3] = [A, B, X, Y][up, right, down, left]
+        L2 = rc[2] & 0b0010_0000
+        if L2 != 0:
+            self.stopped.set()
+
         return RobotObservation(
             joint_position=joint_position,  # in sim order, relative to q0
             joint_velocity=joint_velocity,  # in sim order
