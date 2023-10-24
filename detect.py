@@ -68,6 +68,7 @@ if __name__ == '__main__':
     import cv2
     import torchvision.transforms as T
     import zmq
+    from tqdm import tqdm
     cap = cv2.VideoCapture(
         'udpsrc address=192.168.123.15 port=9201 '
         '! application/x-rtp,media=video,encoding-name=H264 '
@@ -77,18 +78,20 @@ if __name__ == '__main__':
     ctx: 'zmq.Context[zmq.Socket]' = zmq.Context.instance()
     socket = ctx.socket(zmq.DEALER)
     socket.set(zmq.CONFLATE, 1)
-    socket.bind('tcp://127.0.0.1:5555')
+    socket.connect('tcp://127.0.0.1:5555')
 
     detector = Detector(Path('best.trt'))
     detector.get_fps()
 
-    while True:
-        rv, image = cap.read()
-        if not rv:
-            continue
-        image = T.ToTensor()(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        image = T.Pad((8, 40))(image)
-        num, boxes, scores, classes = detector.detect(image[None])
-        score = scores[0, 0].item()
-        box_corner = boxes[0, 0].tolist()
-        socket.send_pyobj((score, box_corner))
+    with tqdm() as pbar:
+        while True:
+            rv, image = cap.read()
+            if not rv:
+                continue
+            image = T.ToTensor()(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            image = T.Pad((8, 40))(image)
+            num, boxes, scores, classes = detector.detect(image[None])
+            score = scores[0, 0].item() + 1 if num > 0 else float('-inf')
+            box_corner = boxes[0, 0].tolist()
+            socket.send_pyobj((score, box_corner))
+            pbar.update()

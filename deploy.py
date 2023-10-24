@@ -13,7 +13,7 @@ class BallDetector:
         ctx: 'zmq.Context[zmq.Socket]' = zmq.Context.instance()
         self.socket = sock = ctx.socket(zmq.DEALER)
         sock.set(zmq.CONFLATE, 1)
-        sock.connect('tcp://127.0.0.1:5555')
+        sock.bind('tcp://127.0.0.1:5555')
         self.box_corner = None
 
     def refresh(self):
@@ -22,12 +22,12 @@ class BallDetector:
         except zmq.error.Again:
             return
 
-        if score + 1 > 0.5:
+        if score > 0.5:
             self.box_corner = box_corner
 
     def get_ball_pos(self):
         if self.box_corner is None:
-            return torch.tensor([0.5, 0.0, 0.0], dtype=torch.float32)
+            return torch.tensor([0.2, 0.0, 0.0], dtype=torch.float32)
         x0, y0, x1, y1 = self.box_corner
         image_width = 480
         offset = (x0 + x1) / 2 - image_width / 2
