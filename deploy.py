@@ -89,7 +89,7 @@ class DribbleEnv(RealtimeEnv):
         self.buffer = torch.zeros(history_len * 3, self.obs_dim, dtype=torch.float32)
         self.t = history_len
 
-        self.action_t = torch.zeros(self.obs_dim, dtype=torch.float32)
+        self.action_t = torch.zeros(self.act_dim, dtype=torch.float32)
         self.action_t_minus1 = torch.zeros(self.act_dim, dtype=torch.float32)
 
         self.gait_index = torch.zeros(1, dtype=torch.float32)
