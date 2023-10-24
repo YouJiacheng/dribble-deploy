@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
@@ -79,10 +80,10 @@ class RobotObservation:
     gyroscope: torch.Tensor
     quaternion: torch.Tensor
     rpy: torch.Tensor
-    lx: torch.Tensor
-    ly: torch.Tensor
-    rx: torch.Tensor
-    ry: torch.Tensor
+    lx: float
+    ly: float
+    rx: float
+    ry: float
 
 
 class Robot:
@@ -99,6 +100,10 @@ class Robot:
         self.motor_state_模 = [self.motor_state_实[i] for i in sim_idx_to_real_idx]
 
         self.imu = self.state.imu
+
+        # the struct module does have compiled format cache
+        # reuse the Struct object explicitly for clarity, not performance
+        self.joystick_struct = struct.Struct('@5f')
 
         self.Δq_真 = [float('NaN') for _ in range(12)]
 
@@ -193,16 +198,16 @@ class Robot:
 
         # imu.gyroscope & .rpy: std::array<float, 3>
         # imu.quaternion: std::array<float, 4>
+        # => list[float]
         imu = self.imu
-        # pybind11 will convert std::array into python list
         gyroscope = torch.tensor(imu.gyroscope, dtype=dtype)  # rpy order, rad/s
         quaternion = torch.tensor(imu.quaternion, dtype=dtype)  # (w, x, y, z) order, normalized
         rpy = torch.tensor(imu.rpy, dtype=dtype)  # rpy order, rad
 
-        rc = self.state.wirelessRemote  # std::array<uint8_t, 40>
-        # pybind11 will convert std::array into python list
-        keydata = torch.tensor(rc, dtype=torch.uint8)[4:24].view(torch.float32)
-        lx, rx, ry, _, ly = keydata
+        rc = self.state.wirelessRemote  # std::array<uint8_t, 40> => list[int]
+        # stdlib struct.unpack is faster than convert tensor then .view(torch.float32)
+        # and torch<=1.10 only support .view to dtype with same size
+        lx, rx, ry, _, ly = self.joystick_struct.unpack(bytes(rc[4:24]))
 
         return RobotObservation(
             joint_position=joint_position,  # in sim order, relative to q0
@@ -233,7 +238,7 @@ class Robot:
             # reduce Δq magnitude by 0.05 rad per step
             Δq_t = [math.copysign(max(0, abs(Δq) - 0.05), Δq) for Δq in Δq_t]
             Δq_sequence.append(Δq_t)
-        
+
         for Δq_t in Δq_sequence:
             self.Δq_真 = Δq_t
             # 0.05 sec per step
