@@ -72,6 +72,10 @@ sim_idx_to_real_idx = [id_to_real_index[name_to_id[name]] for name in sim_index_
 # instead of `for id in real_index_to_id.values()`
 real_idx_to_sim_idx = [name_to_sim_index[id_to_name[real_index_to_id[i]]] for i in range(num_joints)]
 
+# 模: sim, 真: real
+q0_模 = [name_to_q0[name] for name in sim_index_to_name]
+q0_真 = [name_to_q0[id_to_name[real_index_to_id[i]]] for i in range(num_joints)]
+
 
 @dataclass
 class RobotObservation:
@@ -92,9 +96,6 @@ class RobotObservation:
 
 class Robot:
     LOWLEVEL = 0xFF
-    # 模: sim, 真: real
-    q0_模 = tuple(name_to_q0[name] for name in sim_index_to_name)
-    q0_真 = tuple(name_to_q0[id_to_name[real_index_to_id[i]]] for i in range(num_joints))
 
     def __init__(self):
         self.state = sdk.LowState()
@@ -121,7 +122,6 @@ class Robot:
         Kd = 0.5
 
         # shorthand
-        q0_真 = self.q0_真
         state = self.state
         stopped = self.stopped
 
@@ -195,7 +195,6 @@ class Robot:
 
         # shorthand
         motor_state_模 = self.motor_state_模
-        q0_模 = self.q0_模
 
         joint_position = torch.tensor([ms.q - q0 for ms, q0 in zip(motor_state_模, q0_模)], dtype=dtype)
         joint_velocity = torch.tensor([ms.dq for ms in motor_state_模], dtype=dtype)
