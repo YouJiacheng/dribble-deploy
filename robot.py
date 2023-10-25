@@ -79,11 +79,15 @@ class RobotObservation:
     joint_velocity: torch.Tensor
     gyroscope: torch.Tensor
     quaternion: torch.Tensor
-    rpy: torch.Tensor
+    roll: float
+    pitch: float
+    yaw: float
     lx: float
     ly: float
     rx: float
     ry: float
+    L1: bool
+    L2: bool
 
 
 class Robot:
@@ -202,7 +206,7 @@ class Robot:
         imu = self.imu
         gyroscope = torch.tensor(imu.gyroscope, dtype=dtype)  # rpy order, rad/s
         quaternion = torch.tensor(imu.quaternion, dtype=dtype)  # (w, x, y, z) order, normalized
-        rpy = torch.tensor(imu.rpy, dtype=dtype)  # rpy order, rad
+        roll, pitch, yaw = imu.rpy  # rpy order, rad
 
         rc = self.state.wirelessRemote  # std::array<uint8_t, 40> => list[int]
         # stdlib struct.unpack is faster than convert tensor then .view(torch.float32)
@@ -212,20 +216,23 @@ class Robot:
         # LSB -> MSB
         # rc[2] = [R1, L1, start, select][R2, L2, F1, F2]
         # rc[3] = [A, B, X, Y][up, right, down, left]
-        L2 = rc[2] & 0b0010_0000
-        if L2 != 0:
-            self.stopped.set()
+        button_L1 = rc[2] & 0b0000_0010
+        button_L2 = rc[2] & 0b0010_0000
 
         return RobotObservation(
             joint_position=joint_position,  # in sim order, relative to q0
             joint_velocity=joint_velocity,  # in sim order
             gyroscope=gyroscope,
             quaternion=quaternion,
-            rpy=rpy,
+            roll=roll,
+            pitch=pitch,
+            yaw=yaw,
             lx=lx,
             ly=ly,
             rx=rx,
             ry=ry,
+            L1=bool(button_L1),
+            L2=bool(button_L2),
         )
 
     def set_act(self, action: torch.Tensor):

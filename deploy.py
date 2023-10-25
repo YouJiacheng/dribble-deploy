@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import zmq
 
-from math_utils import project_gravity, wrap_to_pi_
+from math_utils import project_gravity, wrap_to_pi
 from robot import Robot, RobotObservation
 
 
@@ -22,22 +22,35 @@ class BallDetector:
         except zmq.error.Again:
             return
 
-        if score > 0.5:
-            self.box_corner = box_corner
+        self.box_corner = box_corner if score > 0.7 else None
 
     def get_ball_pos(self):
         if self.box_corner is None:
             return torch.tensor([0.2, 0.0, 0.0], dtype=torch.float32)
         x0, y0, x1, y1 = self.box_corner
         image_width = 480
-        offset = (x0 + x1) / 2 - image_width / 2
+        offset_from_center = (x0 + x1) / 2 - image_width / 2
+        # the line y = 0 (the x-axis) has offset_from_center ≈ -40
+        offset_from_x_axis = offset_from_center + 40
+
         w = x1 - x0
         h = y1 - y0
         size = math.sqrt(w * h)
 
-        r = 20 / size  # ball at 1m distance has size 20px
-        θ = offset * 0.3 * (math.pi / 180)  # 0.3 deg per pixel
-        return torch.tensor([r * math.cos(θ), r * math.sin(θ), 0.0], dtype=torch.float32)
+        # ball at 1m distance has size 20px
+        r = 20 / size
+
+        # the positive direction of offset points to the right
+        # the positive direction of θ is counter-clockwise
+        # the ray θ = 0 points forward
+
+        θ = -math.radians(0.4 * offset_from_x_axis)  # 0.4° per pixel
+
+        # right-handed coordinate system
+        # the positive x-axis points forward
+        # the positive y-axis points to the left
+        # the positive z-axis points up
+        return torch.tensor([r * math.cos(θ), r * math.sin(θ), 0], dtype=torch.float32)
 
 
 def load_policy(root: Path):
@@ -67,8 +80,8 @@ class DribbleEnv(RealtimeEnv):
 
     # gait type parameters
     phase = 0.5
-    offset = 0
-    bound = 0
+    offset = 0.0
+    bound = 0.0
 
     foot_gait_offsets = torch.tensor([phase + offset + bound, offset, bound, phase], dtype=torch.float32)
 
@@ -82,7 +95,7 @@ class DribbleEnv(RealtimeEnv):
     action_scale = 0.25
     hip_scale_reduction = torch.tensor([0.5, 1, 1] * 4, dtype=torch.float32)
 
-    def __init__(self, history_len: int):
+    def __init__(self, history_len: int, robot: Robot, ball_detector: BallDetector):
         assert history_len > 0
 
         self.history_len = history_len
@@ -94,15 +107,17 @@ class DribbleEnv(RealtimeEnv):
 
         self.gait_index = torch.zeros(1, dtype=torch.float32)
 
-        self.robot = Robot()
-        self.ball_detector = BallDetector()
+        self.yaw_init = 0.0
+
+        self.robot = robot
+        self.ball_detector = ball_detector
 
     def observe(self):
         self.ball_detector.refresh()
         robot_obs = self.robot.get_obs()
         obs = self.make_obs(robot_obs)
         self.store_obs(obs)
-        return self.buffer[self.t - self.history_len:self.t]
+        return self.buffer[self.t - self.history_len:self.t], robot_obs
 
     def advance(self, action):
         self.action_t_minus1[:] = self.action_t
@@ -147,7 +162,7 @@ class DribbleEnv(RealtimeEnv):
         action = self.action_t
         last_action = self.action_t_minus1
         clock = torch.sin(2 * torch.pi * self.foot_indices())
-        yaw = wrap_to_pi_(robot_obs.rpy[None, 2].clone())
+        yaw = torch.tensor([wrap_to_pi(robot_obs.yaw - self.yaw_init)], dtype=torch.float32)
         timing = self.gait_index
 
         return torch.cat([
@@ -164,4 +179,38 @@ class DribbleEnv(RealtimeEnv):
     def foot_indices(self):
         return self.gait_index + self.foot_gait_offsets
 
+    def set_yaw_init(self, yaw_init: float):
+        self.yaw_init = yaw_init
 
+
+def main():
+    import time
+    policy = load_policy(Path(__file__).resolve().parent)
+    robot = Robot()
+    ball_detector = BallDetector()
+    env = DribbleEnv(history_len=15, robot=robot, ball_detector=ball_detector)
+
+    robot.init()
+    while True:
+        obs, robot_obs = env.observe()
+        env.advance(torch.zeros(12, dtype=torch.float32))
+        if robot_obs.L1:
+            break
+        time.sleep(0.02)
+
+    env.set_yaw_init(robot_obs.yaw)
+
+    while True:
+        obs, robot_obs = env.observe()
+        action = policy(obs)
+        env.advance(action)
+        if robot_obs.L2:
+            break
+        time.sleep(0.02)
+
+    robot.stopped.set()
+    robot.background_thread.join()
+
+
+if __name__ == '__main__':
+    main()
