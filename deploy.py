@@ -203,12 +203,14 @@ def main():
     env.yaw_init = robot_obs.yaw
 
     while True:
+        begin = time.perf_counter()
         obs, robot_obs = env.observe()
         action = policy(obs)
         env.advance(action)
         if robot_obs.L2:
             break
-        time.sleep(0.02)
+        end = time.perf_counter()
+        time.sleep(max(0, begin + 0.02 - end))
 
     robot.stopped.set()
     robot.background_thread.join()
