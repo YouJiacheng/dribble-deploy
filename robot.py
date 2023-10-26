@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
 
-import torch
-
 finder = importlib.machinery.PathFinder()
 spec = finder.find_spec(
     'robot_interface',
@@ -79,10 +77,10 @@ q0_真 = [name_to_q0[id_to_name[real_index_to_id[i]]] for i in range(num_joints)
 
 @dataclass
 class RobotObservation:
-    joint_position: torch.Tensor
-    joint_velocity: torch.Tensor
-    gyroscope: torch.Tensor
-    quaternion: torch.Tensor
+    joint_position: 'list[float]'
+    joint_velocity: 'list[float]'
+    gyroscope: 'list[float]'
+    quaternion: 'list[float]'
     roll: float
     pitch: float
     yaw: float
@@ -191,21 +189,19 @@ class Robot:
             udp.Send()
 
     def get_obs(self):
-        dtype = torch.float32
-
         # shorthand
         motor_state_模 = self.motor_state_模
 
-        joint_position = torch.tensor([ms.q - q0 for ms, q0 in zip(motor_state_模, q0_模)], dtype=dtype)
-        joint_velocity = torch.tensor([ms.dq for ms in motor_state_模], dtype=dtype)
+        joint_position = [ms.q - q0 for ms, q0 in zip(motor_state_模, q0_模)]
+        joint_velocity = [ms.dq for ms in motor_state_模]
 
         # imu.gyroscope & .rpy: std::array<float, 3>
         # imu.quaternion: std::array<float, 4>
         # => list[float]
         imu = self.imu
-        gyroscope = torch.tensor(imu.gyroscope, dtype=dtype)  # rpy order, rad/s
-        quaternion = torch.tensor(imu.quaternion, dtype=dtype)  # (w, x, y, z) order, normalized
-        roll, pitch, yaw = imu.rpy  # rpy order, rad
+        gyroscope = imu.gyroscope       # rpy order, rad/s
+        quaternion = imu.quaternion     # (w, x, y, z) order, normalized
+        roll, pitch, yaw = imu.rpy      # rpy order, rad
 
         rc = self.state.wirelessRemote  # std::array<uint8_t, 40> => list[int]
         # stdlib struct.unpack is faster than convert tensor then .view(torch.float32)
@@ -234,9 +230,8 @@ class Robot:
             L2=bool(button_L2),
         )
 
-    def set_act(self, action: torch.Tensor):
-        Δq_模 = action.tolist()
-        self.Δq_真 = [Δq_模[i] for i in real_idx_to_sim_idx]
+    def set_act(self, action: 'list[float]'):
+        self.Δq_真 = [action[i] for i in real_idx_to_sim_idx]
 
     def init(self):
         import math

@@ -26,7 +26,7 @@ class BallDetector:
 
     def get_ball_pos(self):
         if self.box_corner is None:
-            return torch.tensor([0.2, 0.0, 0.0], dtype=torch.float32)
+            return [0.2, 0.0, 0.0]
         x0, y0, x1, y1 = self.box_corner
         image_width = 480
         offset_from_center = (x0 + x1) / 2 - image_width / 2
@@ -50,7 +50,7 @@ class BallDetector:
         # the positive x-axis points forward
         # the positive y-axis points to the left
         # the positive z-axis points up
-        return torch.tensor([r * math.cos(θ), r * math.sin(θ), 0], dtype=torch.float32)
+        return [r * math.cos(θ), r * math.sin(θ), 0.0]
 
 
 def load_policy(root: Path):
@@ -83,10 +83,10 @@ class DribbleEnv(RealtimeEnv):
     offset = 0.0
     bound = 0.0
 
-    foot_gait_offsets = torch.tensor([phase + offset + bound, offset, bound, phase], dtype=torch.float32)
+    foot_gait_offsets = [phase + offset + bound, offset, bound, phase]
 
     duration = 0.5  # duration = stance / (stance + swing)
-    step_frequency = 3
+    step_frequency = 3.0
 
     control_decimation = 4
     simulation_dt = 0.005
@@ -105,7 +105,7 @@ class DribbleEnv(RealtimeEnv):
         self.action_t = torch.zeros(self.act_dim, dtype=torch.float32)
         self.action_t_minus1 = torch.zeros(self.act_dim, dtype=torch.float32)
 
-        self.gait_index = torch.zeros(1, dtype=torch.float32)
+        self.gait_index = 0.0
 
         self.yaw_init = 0.0
 
@@ -119,13 +119,13 @@ class DribbleEnv(RealtimeEnv):
         self.store_obs(obs)
         return self.buffer[self.t - self.history_len:self.t], robot_obs
 
-    def advance(self, action):
+    def advance(self, action: torch.Tensor):
         self.action_t_minus1[:] = self.action_t
         self.action_t[:] = action
 
         action_scaled = action * self.action_scale * self.hip_scale_reduction
-        self.robot.set_act(action_scaled)
-        self.gait_index.add_(self.dt * self.step_frequency).remainder_(1)
+        self.robot.set_act(action_scaled.tolist())
+        self.gait_index = (self.gait_index + self.step_frequency * self.dt) % 1
 
     def store_obs(self, obs: torch.Tensor):
         h, buffer, t = self.history_len, self.buffer, self.t
@@ -138,49 +138,51 @@ class DribbleEnv(RealtimeEnv):
     def make_obs(self, robot_obs: RobotObservation) -> torch.Tensor:
         ball_pos = self.ball_detector.get_ball_pos()
         projected_gravity = project_gravity(robot_obs.quaternion)
-        commands = torch.tensor([
+        commands = [
             # rocker x: left/right
             # rocker y: forward/backward
             robot_obs.ly * 2,   # x vel
             robot_obs.lx * 2,   # y vel
-            0 * 0.25,           # yaw vel
-            0 * 2,              # body height
+            0.0 * 0.25,         # yaw vel
+            0.0 * 2,            # body height
             self.step_frequency,
             self.phase,
             self.offset,
             self.bound,
             self.duration,
             0.09 * 0.15,        # foot swing height
-            0 * 0.3,            # pitch
-            0 * 0.3,            # roll
-            0,                  # stance_width
+            0.0 * 0.3,          # pitch
+            0.0 * 0.3,          # roll
+            0.0,                # stance_width
             0.1 / 2,            # stance length
             0.01 / 2,           # unknown
-        ], dtype=torch.float32)
+        ]
         dof_pos = robot_obs.joint_position
-        dof_vel = robot_obs.joint_velocity * 0.05
+        dof_vel = [v * 0.05 for v in robot_obs.joint_velocity]
         action = self.action_t
         last_action = self.action_t_minus1
-        clock = torch.sin(2 * torch.pi * self.foot_indices())
-        yaw = torch.tensor([wrap_to_pi(robot_obs.yaw - self.yaw_init)], dtype=torch.float32)
+
+        clock = self.clock()
+        yaw = wrap_to_pi(robot_obs.yaw - self.yaw_init)
         timing = self.gait_index
 
         return torch.cat([
-            ball_pos,
-            projected_gravity,
-            commands,
-            dof_pos, dof_vel,
+            torch.tensor([
+                *ball_pos,
+                *projected_gravity,
+                *commands,
+                *dof_pos,
+                *dof_vel,
+            ], dtype=torch.float32),
             action, last_action,
-            clock,
-            yaw,
-            timing,
+            torch.tensor([*clock, yaw, timing], dtype=torch.float32),
         ])
 
-    def foot_indices(self):
-        return self.gait_index + self.foot_gait_offsets
-
-    def set_yaw_init(self, yaw_init: float):
-        self.yaw_init = yaw_init
+    def clock(self):
+        return [
+            math.sin(2 * math.pi * (self.gait_index + offset))
+            for offset in self.foot_gait_offsets
+        ]
 
 
 def main():
@@ -198,7 +200,7 @@ def main():
             break
         time.sleep(0.02)
 
-    env.set_yaw_init(robot_obs.yaw)
+    env.yaw_init = robot_obs.yaw
 
     while True:
         obs, robot_obs = env.observe()

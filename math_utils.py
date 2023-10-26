@@ -1,32 +1,27 @@
 import math
 
-import torch
+"""
+import sympy
+
+w, x, y, z = sympy.symbols('w x y z')
+q = sympy.Quaternion(w, x, y, z)
+q.set_norm(1)
+project_gravity = sympy.Quaternion.rotate_point((0, 0, -1), q.inverse())
+
+gx = 2 * w * y - 2 * x * z
+gy = -2 * w * x - 2 * y * z
+gz = -w * w + x * x + y * y - z * z
+
+assert project_gravity == (gx, gy, gz)
+"""
 
 
-def quaternion_multiply(q1: torch.Tensor, q2: torch.Tensor):
-    w1, u1 = q1[..., :1], q1[..., 1:]
-    w2, u2 = q2[..., :1], q2[..., 1:]
-
-    scalar = w1 * w2 - torch.einsum('...i,...i', u1, u2).unsqueeze(-1)
-    vector = w1 * u2 + w2 * u1 + torch.cross(u1, u2, dim=-1)
-
-    return torch.cat([scalar, vector], dim=-1)
-
-
-def quaternion_conjugate(q: torch.Tensor):
-    w, u = q[..., :1], q[..., 1:]
-    return torch.cat([w, -u], dim=-1)
-
-
-def rotate_vector_by_quaternion(v: torch.Tensor, q: torch.Tensor):
-    v_quaternion = torch.cat([v.new_zeros(*v.shape[:-1], 1), v], dim=-1)
-    rotated_quaternion = quaternion_multiply(q, quaternion_multiply(v_quaternion, quaternion_conjugate(q)))
-    return rotated_quaternion[..., 1:]
-
-
-def project_gravity(quaternion: torch.Tensor):
-    gravity = torch.tensor([0.0, 0.0, -1], dtype=torch.float32)
-    return rotate_vector_by_quaternion(gravity, quaternion_conjugate(quaternion))
+def project_gravity(quaternion: 'list[float]'):
+    w, x, y, z = quaternion  # assume normalized
+    gx = 2 * w * y - 2 * x * z
+    gy = -2 * w * x - 2 * y * z
+    gz = -w * w + x * x + y * y - z * z
+    return [gx, gy, gz]
 
 
 def wrap_to_pi(x: float):
