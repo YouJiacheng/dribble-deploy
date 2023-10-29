@@ -103,7 +103,7 @@ def serialize_network(builder, network, workspace_GiB: float, enable_fp16: bool,
 def main():
     import argparse
     argparser = argparse.ArgumentParser()
-    # replace all double quote with single quote
+
     argparser.add_argument('-f', '--onnx_path', help='ONNX model path')
     argparser.add_argument('-v', '--verbose', action='store_true')
     argparser.add_argument('--fp16', action='store_true', help='Enable fp16 layer selection')

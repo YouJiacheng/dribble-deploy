@@ -64,7 +64,7 @@ class Detector:
         print(f'{100 / (time.perf_counter() - t)} FPS')
 
 
-if __name__ == '__main__':
+def main():
     import cv2
     import torchvision.transforms as T
     import zmq
@@ -90,8 +90,12 @@ if __name__ == '__main__':
                 continue
             image = T.ToTensor()(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             image = T.Pad((8, 40))(image)
-            num, boxes, scores, classes = detector.detect(image[None])
+            num, boxes, scores, _ = detector.detect(image[None])
             score = scores[0, 0].item() + 1 if num > 0 else float('-inf')
             box_corner = boxes[0, 0].tolist()
             socket.send_pyobj((score, box_corner))
             pbar.update()
+
+
+if __name__ == '__main__':
+    main()
