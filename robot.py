@@ -70,9 +70,8 @@ sim_idx_to_real_idx = [id_to_real_index[name_to_id[name]] for name in sim_index_
 # instead of `for id in real_index_to_id.values()`
 real_idx_to_sim_idx = [name_to_sim_index[id_to_name[real_index_to_id[i]]] for i in range(num_joints)]
 
-# 模: sim, 真: real
-q0_模 = [name_to_q0[name] for name in sim_index_to_name]
-q0_真 = [name_to_q0[id_to_name[real_index_to_id[i]]] for i in range(num_joints)]
+q0_sim = [name_to_q0[name] for name in sim_index_to_name]
+q0_real = [name_to_q0[id_to_name[real_index_to_id[i]]] for i in range(num_joints)]
 
 
 @dataclass
@@ -99,8 +98,8 @@ class Robot:
         self.state = sdk.LowState()
 
         # pybind11 will convert std::array into python list
-        self.motor_state_实 = self.state.motorState[:12]  # std::array<MotorState, 20>
-        self.motor_state_模 = [self.motor_state_实[i] for i in sim_idx_to_real_idx]
+        self.motor_state_real = self.state.motorState[:12]  # std::array<MotorState, 20>
+        self.motor_state_sim = [self.motor_state_real[i] for i in sim_idx_to_real_idx]
 
         self.imu = self.state.imu
 
@@ -108,7 +107,7 @@ class Robot:
         # reuse the Struct object explicitly for clarity, not performance
         self.rocker_struct = struct.Struct('@5f')
 
-        self.Δq_真 = [float('NaN') for _ in range(12)]
+        self.Δq_real = [float('NaN') for _ in range(12)]
 
         self.stopped = Event()
         self.background_thread = Thread(target=self._send_recv_loop, daemon=True)
@@ -132,7 +131,7 @@ class Robot:
             udp.Recv()
             udp.GetRecv(state)
             if state.tick != 0:
-                self.Δq_真 = [ms.q - q0 for ms, q0 in zip(state.motorState, q0_真)]
+                self.Δq_real = [ms.q - q0 for ms, q0 in zip(state.motorState, q0_real)]
                 break
 
         # === Loop Invariant Code Motion ===
@@ -179,7 +178,7 @@ class Robot:
         # mc.q = q for mc, q in zip(motor_cmd, qs) cost ~12 μs
 
         while not stopped.wait(0.005):
-            for mc, q0, Δq in zip(motor_cmd, q0_真, self.Δq_真):
+            for mc, q0, Δq in zip(motor_cmd, q0_real, self.Δq_real):
                 mc.q = q0 + Δq  # expected position
             safe.PositionLimit(cmd)
             udp.Recv()
@@ -190,10 +189,10 @@ class Robot:
 
     def get_obs(self):
         # shorthand
-        motor_state_模 = self.motor_state_模
+        motor_state_sim = self.motor_state_sim
 
-        joint_position = [ms.q - q0 for ms, q0 in zip(motor_state_模, q0_模)]
-        joint_velocity = [ms.dq for ms in motor_state_模]
+        joint_position = [ms.q - q0 for ms, q0 in zip(motor_state_sim, q0_sim)]
+        joint_velocity = [ms.dq for ms in motor_state_sim]
 
         # imu.gyroscope & .rpy: std::array<float, 3>
         # imu.quaternion: std::array<float, 4>
@@ -231,23 +230,23 @@ class Robot:
         )
 
     def set_act(self, action: 'list[float]'):
-        self.Δq_真 = [action[i] for i in real_idx_to_sim_idx]
+        self.Δq_real = [action[i] for i in real_idx_to_sim_idx]
 
     def init(self):
         import math
         stopped = self.stopped
-        while any(math.isnan(Δq) for Δq in self.Δq_真) and not stopped.wait(0.05):
+        while any(math.isnan(Δq) for Δq in self.Δq_real) and not stopped.wait(0.05):
             pass
 
         Δq_sequence = []
-        Δq_t = self.Δq_真
+        Δq_t = self.Δq_real
         while any(abs(Δq) > 0.01 for Δq in Δq_t):
             # reduce Δq magnitude by 0.05 rad per step
             Δq_t = [math.copysign(max(0, abs(Δq) - 0.05), Δq) for Δq in Δq_t]
             Δq_sequence.append(Δq_t)
 
         for Δq_t in Δq_sequence:
-            self.Δq_真 = Δq_t
+            self.Δq_real = Δq_t
             # 0.05 sec per step
             if stopped.wait(0.05):
                 break
